@@ -1,0 +1,9 @@
+build/
+.gradle/
+local.properties
+.idea/
+*.iml
+.DS_Store
+.settings/org.eclipse.jdt.core.prefs
+*.log
+gradle/wrapper/gradle-wrapper.jar

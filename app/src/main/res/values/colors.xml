@@ -1,0 +1,13 @@
+<resources>
+    <color name="green_500">#4CAF50</color>
+    <color name="green_700">#2E7D32</color>
+    <color name="orange_500">#FF9800</color>
+    <color name="orange_700">#E65100</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+
+    <!-- Material3 surface colors -->
+    <color name="surfaceContainerLow">#F5F5F5</color>
+    <color name="onSurface">#1C1B1F</color>
+    <color name="onSurfaceVariant">#49454F</color>
+</resources>

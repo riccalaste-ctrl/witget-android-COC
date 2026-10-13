@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="180dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:maxResizeWidth="540dp"
+    android:maxResizeHeight="360dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="180dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_main_initial"
+    android:configure="com.zacatac.clashboard.widget.config.WidgetConfigActivity"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:previewImage="@drawable/widget_preview_main"
+    android:description="@string/widget_main_description">
+</appwidget-provider>
