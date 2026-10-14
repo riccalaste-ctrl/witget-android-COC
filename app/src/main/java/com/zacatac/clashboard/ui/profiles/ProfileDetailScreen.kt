@@ -2,76 +2,110 @@
 
 package com.zacatac.clashboard.ui.profiles
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.zacatac.clashboard.data.model.PlayerAccount
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.zacatac.clashboard.ui.MainViewModel
 
 @Composable
 fun ProfileDetailScreen(
     profileId: String,
-    modifier: androidx.compose.ui.Modifier = Modifier
+    onBackClick: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    viewModel: MainViewModel = hiltViewModel()
 ) {
-    // TODO: Load profile from ViewModel
-    val profile = remember { mutableStateOf<PlayerAccount?>(null) }
+    val profiles by viewModel.profiles.collectAsState()
+    val profile = profiles.firstOrNull { it.id.toString() == profileId }
 
     Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) {
         TopAppBar(
-            title = { Text("Profile Details", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer)
+            title = {
+                Text(
+                    profile?.widgetDisplayName ?: "Dettaglio Profilo",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBackClick) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Indietro",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            )
         )
 
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Text("Profile ID: $profileId", fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            
-            // Profile form fields
-            ProfileField("Profile Name", "My Village")
-            ProfileField("Player Tag", "#ABC123DEF")
-            ProfileField("Builder Count", "5", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-            ProfileField("Builder Apprentice Level", "0", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-            ProfileField("Lab Assistant Level", "0", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-            ProfileField("Alchemist Level", "0", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-            ProfileField("Clock Tower Level", "0", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-            ProfileField("Gold Pass Boost %", "0", keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-
-            Button(onClick = { /* Save */ }, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                Text("Save Changes")
+        if (profile != null) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    DetailRow("Tag Giocatore", "#${profile.tag}")
+                    DetailRow("Nome", profile.widgetDisplayName)
+                    DetailRow("Costruttori", "${profile.builderCount}")
+                    DetailRow("Upgrade in corso", "${profile.activeUpgrades.size}")
+                }
             }
         }
     }
 }
 
 @Composable
-fun ProfileField(label: String, value: String, keyboardType: androidx.compose.ui.text.input.KeyboardType = androidx.compose.ui.text.input.KeyboardType.Text) {
-    androidx.compose.foundation.layout.Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(label, fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-        TextField(
-            value = value,
-            onValueChange = { },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType)
+fun DetailRow(label: String, value: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
         )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        }
     }
 }

@@ -4,6 +4,7 @@
     package="com.zacatac.clashboard">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -110,6 +111,18 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
+        </receiver>
+
+        <!-- One-minute widget countdown tick -->
+        <receiver
+            android:name=".widget.WidgetTickReceiver"
+            android:exported="false">
+        </receiver>
+
+        <!-- Upgrade completion alarm receiver -->
+        <receiver
+            android:name=".widget.UpgradeAlarmReceiver"
+            android:exported="false">
         </receiver>
 
         <!-- WorkManager is auto-initialized -->

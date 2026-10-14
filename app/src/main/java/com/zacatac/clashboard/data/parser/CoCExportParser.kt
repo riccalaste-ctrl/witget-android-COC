@@ -15,10 +15,14 @@ import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
 
 class CoCExportParser(private val context: Context) {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
     private val assetManager: AssetManager = context.assets
 
-    // Mapping from dataId to building name
+    // Mapping from dataId to building/unit name
     private val nameMapping: MutableMap<Int, String> = mutableMapOf()
     // Building JSON map for metadata
     private val buildingJsonMap: MutableMap<String, BuildingJsonMapEntry> = mutableMapOf()
@@ -32,7 +36,7 @@ class CoCExportParser(private val context: Context) {
     }
 
     private fun loadMappings() {
-        // Load name mapping
+        // Load name mapping (227 canonical game IDs)
         loadJsonMap("json/mapping.json")?.let { map ->
             map.forEach { (key, value) ->
                 key.toIntOrNull()?.let { nameMapping[it] = value.jsonPrimitive.content }
@@ -48,7 +52,7 @@ class CoCExportParser(private val context: Context) {
             }
         }
 
-        // Load parsed building times from parsed_json_files/buildings.json
+        // Load parsed building times
         loadParsedBuildTimes("json/parsed_json_files/buildings.json")
         loadParsedBuildTimes("json/parsed_json_files/mini_levels.json")
     }
@@ -87,158 +91,165 @@ class CoCExportParser(private val context: Context) {
 
     fun parseExport(jsonString: String, profile: PlayerAccount): ParseResult {
         val export = json.decodeFromString<CoCExport>(jsonString)
-        val timestamp = export.timestamp?.let { Instant.fromEpochSeconds(it) } ?: Clock.System.now()
-        val playerTag = export.tag?.uppercase() ?: ""
+        // Timers in the export are remaining seconds from NOW (when the user exported)
+        val referenceDate = Clock.System.now()
+        val playerTag = export.tag?.uppercase()?.replace("#", "") ?: ""
 
         val upgrades = mutableListOf<BuildingUpgrade>()
         val activeBoosts = mutableListOf<ActiveBoost>()
 
         // Parse buildings (Home Village)
         export.buildings?.forEach { building ->
-            parseBuilding(building, UpgradeCategory.BUILDER_VILLAGE, timestamp, upgrades, activeBoosts, profile)
+            parseBuilding(building, UpgradeCategory.BUILDER_VILLAGE, referenceDate, upgrades, profile)
         }
 
         // Parse buildings2 (Builder Base)
         export.buildings2?.forEach { building ->
-            parseBuilding(building, UpgradeCategory.BUILDER_BASE, timestamp, upgrades, activeBoosts, profile)
+            parseBuilding(building, UpgradeCategory.BUILDER_BASE, referenceDate, upgrades, profile)
         }
 
-        // Parse traps
+        // Parse traps (Home Village)
         export.traps?.forEach { trap ->
-            parseTrap(trap, UpgradeCategory.BUILDER_VILLAGE, timestamp, upgrades, activeBoosts)
+            parseTrap(trap, UpgradeCategory.BUILDER_VILLAGE, referenceDate, upgrades)
         }
 
+        // Parse traps2 (Builder Base)
         export.traps2?.forEach { trap ->
-            parseTrap(trap, UpgradeCategory.BUILDER_BASE, timestamp, upgrades, activeBoosts)
+            parseTrap(trap, UpgradeCategory.BUILDER_BASE, referenceDate, upgrades)
         }
 
-        // Parse heroes
+        // Parse heroes (Home Village)
         export.heroes?.forEach { hero ->
-            parseHero(hero, UpgradeCategory.BUILDER_VILLAGE, timestamp, upgrades, activeBoosts)
+            parseHero(hero, UpgradeCategory.BUILDER_VILLAGE, referenceDate, upgrades)
         }
 
+        // Parse heroes2 (Builder Base)
         export.heroes2?.forEach { hero ->
-            parseHero(hero, UpgradeCategory.BUILDER_BASE, timestamp, upgrades, activeBoosts)
+            parseHero(hero, UpgradeCategory.BUILDER_BASE, referenceDate, upgrades)
         }
 
-        // Parse pets
+        // Parse pets (Pet House)
         export.pets?.forEach { pet ->
-            parsePet(pet, timestamp, upgrades, activeBoosts)
+            parsePet(pet, referenceDate, upgrades)
         }
 
-        // Parse lab upgrades (units, spells, siege machines)
+        // Parse lab upgrades (units, spells, siege machines, equipment)
         export.units?.forEach { unit ->
-            parseLabUpgrade(unit, UpgradeCategory.LAB, timestamp, upgrades, activeBoosts)
+            parseLabUpgrade(unit, UpgradeCategory.LAB, referenceDate, upgrades)
         }
 
         export.spells?.forEach { spell ->
-            parseLabUpgrade(spell, UpgradeCategory.LAB, timestamp, upgrades, activeBoosts)
+            parseLabUpgrade(spell, UpgradeCategory.LAB, referenceDate, upgrades)
         }
 
         export.siegeMachines?.forEach { siege ->
-            parseLabUpgrade(siege, UpgradeCategory.LAB, timestamp, upgrades, activeBoosts)
+            parseLabUpgrade(siege, UpgradeCategory.LAB, referenceDate, upgrades)
+        }
+
+        // Equipment in the laboratory
+        export.equipment?.forEach { equip ->
+            parseLabUpgrade(equip, UpgradeCategory.LAB, referenceDate, upgrades)
         }
 
         // Parse builder base lab (units2 = star lab)
         export.units2?.forEach { unit ->
-            parseLabUpgrade(unit, UpgradeCategory.STAR_LAB, timestamp, upgrades, activeBoosts)
+            parseLabUpgrade(unit, UpgradeCategory.STAR_LAB, referenceDate, upgrades)
         }
 
-        // Parse equipment
-        export.equipment?.forEach { equip ->
-            parseLabUpgrade(equip, UpgradeCategory.LAB, timestamp, upgrades, activeBoosts)
+        // Guardians (Home Village)
+        export.guardians?.forEach { guardian ->
+            parseGuardian(guardian, referenceDate, upgrades)
         }
 
-        // Parse helpers for boost info
+        // Parse helpers for cooldown tracking
         export.helpers?.forEach { helper ->
-            parseHelper(helper, activeBoosts, profile)
+            parseHelper(helper, profile)
         }
 
         return ParseResult(
-            upgrades = upgrades,
+            upgrades = upgrades.sortedBy { it.endTime },
             activeBoosts = activeBoosts,
             playerTag = playerTag,
-            timestamp = timestamp
+            timestamp = referenceDate
         )
     }
 
     private fun parseBuilding(
         building: Building,
         category: UpgradeCategory,
-        timestamp: Instant,
+        now: Instant,
         upgrades: MutableList<BuildingUpgrade>,
-        activeBoosts: MutableList<ActiveBoost>,
         profile: PlayerAccount
     ) {
-        val name = nameMapping[building.data] ?: buildingJsonMap[building.data.toString()]?.displayName ?: "Unknown (${building.data})"
+        val name = resolveName(building.data, "Edificio")
         val currentLevel = building.lvl ?: 0
         val isExtra = building.extra == true
         val usesGoblin = category == UpgradeCategory.BUILDER_VILLAGE && isExtra
 
-        // Check for active upgrade (timer present)
-        building.timer?.let { timerSeconds ->
+        // Town Hall Weapon upgrade check
+        if (building.data == 1000001 && building.weapon != null && building.timer != null && building.timer > 0) {
+            val timerSeconds = building.timer
+            val endTime = now.plus(timerSeconds.toLong().seconds)
+            val upgrade = BuildingUpgrade(
+                dataId = building.data,
+                name = "Arma Municipio",
+                targetLevel = (building.weapon ?: 0) + 1,
+                endTime = endTime,
+                category = category,
+                startTime = now,
+                totalDuration = timerSeconds.toDouble(),
+                usesGoblin = usesGoblin,
+                sourceExportTimer = timerSeconds
+            )
+            upgrades.add(upgrade)
+            return
+        }
+
+        // Regular building upgrade
+        if (building.timer != null && building.timer > 0) {
+            val timerSeconds = building.timer
             val targetLevel = currentLevel + 1
-            val totalDuration = getBuildTime(building.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-            val endTime = timestamp.plus(timerSeconds.toLong().seconds)
+            val totalDuration = getBuildTime(building.data, targetLevel, category)?.toDouble() ?: timerSeconds.toDouble()
+            val endTime = now.plus(timerSeconds.toLong().seconds)
+
+            val superchargeLevel = building.supercharge
+            val superchargeTarget = superchargeLevel?.let { it + 1 }
 
             val upgrade = BuildingUpgrade(
                 dataId = building.data,
                 name = name,
                 targetLevel = targetLevel,
+                superchargeLevel = superchargeLevel,
+                superchargeTargetLevel = superchargeTarget,
                 endTime = endTime,
                 category = category,
-                startTime = timestamp.minus(totalDuration.toLong().seconds),
-                totalDuration = totalDuration,
+                startTime = now,
+                totalDuration = maxOf(totalDuration, timerSeconds.toDouble()),
                 usesGoblin = usesGoblin,
                 sourceExportTimer = timerSeconds
             )
             upgrades.add(upgrade)
         }
 
-        // Check for supercharge
-        building.supercharge?.let { superchargeLevel ->
-            val targetLevel = superchargeLevel
-            val currentLevel = building.lvl ?: (targetLevel - 1)
-            building.timer?.let { timerSeconds ->
-                val totalDuration = getBuildTime(building.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-                val endTime = timestamp.plus(timerSeconds.toLong().seconds)
-
-                val upgrade = BuildingUpgrade(
-                    dataId = building.data,
-                    name = name,
-                    targetLevel = targetLevel,
-                    superchargeLevel = currentLevel,
-                    superchargeTargetLevel = targetLevel,
-                    endTime = endTime,
-                    category = category,
-                    startTime = timestamp.minus(totalDuration.toLong().seconds),
-                    totalDuration = totalDuration,
-                    usesGoblin = usesGoblin,
-                    sourceExportTimer = timerSeconds
-                )
-                upgrades.add(upgrade)
-            }
-        }
-
-        // Handle seasonal defenses (types with modules)
+        // Seasonal defenses (types and modules)
         building.types?.forEach { type ->
             type.modules?.forEach { module ->
-                module.timer?.let { timerSeconds ->
-                    val moduleName = nameMapping[module.data] ?: buildingJsonMap[module.data.toString()]?.displayName ?: "Unknown (${module.data})"
+                val timerSeconds = module.timer
+                if (timerSeconds != null && timerSeconds > 0) {
+                    val moduleName = resolveName(type.data, "Difesa Modulare")
                     val targetLevel = (module.lvl ?: 0) + 1
-                    val totalDuration = getBuildTime(module.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-                    val endTime = timestamp.plus(timerSeconds.toLong().seconds)
+                    val endTime = now.plus(timerSeconds.toLong().seconds)
 
                     val upgrade = BuildingUpgrade(
-                        dataId = module.data,
+                        dataId = type.data,
                         name = moduleName,
                         targetLevel = targetLevel,
                         endTime = endTime,
                         category = category,
-                        startTime = timestamp.minus(totalDuration.toLong().seconds),
-                        totalDuration = totalDuration,
+                        startTime = now,
+                        totalDuration = timerSeconds.toDouble(),
                         isSeasonalDefense = true,
-                        usesGoblin = usesGoblin,
+                        usesGoblin = module.extra == true,
                         sourceExportTimer = timerSeconds
                     )
                     upgrades.add(upgrade)
@@ -250,139 +261,152 @@ class CoCExportParser(private val context: Context) {
     private fun parseTrap(
         trap: Trap,
         category: UpgradeCategory,
-        timestamp: Instant,
-        upgrades: MutableList<BuildingUpgrade>,
-        activeBoosts: MutableList<ActiveBoost>
+        now: Instant,
+        upgrades: MutableList<BuildingUpgrade>
     ) {
-        val name = nameMapping[trap.data] ?: "Unknown Trap (${trap.data})"
-        val currentLevel = trap.lvl
-        trap.timer?.let { timerSeconds ->
-            val targetLevel = currentLevel + 1
-            val totalDuration = getBuildTime(trap.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-            val endTime = timestamp.plus(timerSeconds.toLong().seconds)
-
-            val upgrade = BuildingUpgrade(
-                dataId = trap.data,
-                name = name,
-                targetLevel = targetLevel,
-                endTime = endTime,
-                category = category,
-                startTime = timestamp.minus(totalDuration.toLong().seconds),
-                totalDuration = totalDuration,
-                sourceExportTimer = timerSeconds
+        val timer = trap.timer
+        if (timer != null && timer > 0) {
+            val name = resolveName(trap.data, "Trappola")
+            val targetLevel = trap.lvl + 1
+            val endTime = now.plus(timer.toLong().seconds)
+            upgrades.add(
+                BuildingUpgrade(
+                    dataId = trap.data,
+                    name = name,
+                    targetLevel = targetLevel,
+                    endTime = endTime,
+                    category = category,
+                    startTime = now,
+                    totalDuration = timer.toDouble(),
+                    sourceExportTimer = timer
+                )
             )
-            upgrades.add(upgrade)
         }
     }
 
     private fun parseHero(
         hero: ExportHero,
         category: UpgradeCategory,
-        timestamp: Instant,
-        upgrades: MutableList<BuildingUpgrade>,
-        activeBoosts: MutableList<ActiveBoost>
+        now: Instant,
+        upgrades: MutableList<BuildingUpgrade>
     ) {
-        val name = nameMapping[hero.data] ?: "Unknown Hero (${hero.data})"
-        val currentLevel = hero.lvl
-        hero.timer?.let { timerSeconds ->
-            val targetLevel = currentLevel + 1
-            val totalDuration = getBuildTime(hero.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-            val endTime = timestamp.plus(timerSeconds.toLong().seconds)
-
-            val upgrade = BuildingUpgrade(
-                dataId = hero.data,
-                name = name,
-                targetLevel = targetLevel,
-                endTime = endTime,
-                category = category,
-                startTime = timestamp.minus(totalDuration.toLong().seconds),
-                totalDuration = totalDuration,
-                sourceExportTimer = timerSeconds
+        val timer = hero.timer
+        if (timer != null && timer > 0) {
+            val name = resolveName(hero.data, "Eroe")
+            val targetLevel = hero.lvl + 1
+            val endTime = now.plus(timer.toLong().seconds)
+            upgrades.add(
+                BuildingUpgrade(
+                    dataId = hero.data,
+                    name = name,
+                    targetLevel = targetLevel,
+                    endTime = endTime,
+                    category = category,
+                    startTime = now,
+                    totalDuration = timer.toDouble(),
+                    sourceExportTimer = timer
+                )
             )
-            upgrades.add(upgrade)
         }
     }
 
     private fun parsePet(
         pet: ExportPet,
-        timestamp: Instant,
-        upgrades: MutableList<BuildingUpgrade>,
-        activeBoosts: MutableList<ActiveBoost>
+        now: Instant,
+        upgrades: MutableList<BuildingUpgrade>
     ) {
-        val name = nameMapping[pet.data] ?: "Unknown Pet (${pet.data})"
-        val currentLevel = pet.lvl
-        pet.timer?.let { timerSeconds ->
-            val targetLevel = currentLevel + 1
-            val totalDuration = getBuildTime(pet.data, targetLevel, UpgradeCategory.PETS)?.toDouble() ?: (timerSeconds.toDouble())
-            val endTime = timestamp.plus(timerSeconds.toLong().seconds)
-
-            val upgrade = BuildingUpgrade(
-                dataId = pet.data,
-                name = name,
-                targetLevel = targetLevel,
-                endTime = endTime,
-                category = UpgradeCategory.PETS,
-                startTime = timestamp.minus(totalDuration.toLong().seconds),
-                totalDuration = totalDuration,
-                sourceExportTimer = timerSeconds
+        val timer = pet.timer
+        if (timer != null && timer > 0) {
+            val name = resolveName(pet.data, "Pet")
+            val targetLevel = pet.lvl + 1
+            val endTime = now.plus(timer.toLong().seconds)
+            upgrades.add(
+                BuildingUpgrade(
+                    dataId = pet.data,
+                    name = name,
+                    targetLevel = targetLevel,
+                    endTime = endTime,
+                    category = UpgradeCategory.PETS,
+                    startTime = now,
+                    totalDuration = timer.toDouble(),
+                    sourceExportTimer = timer
+                )
             )
-            upgrades.add(upgrade)
         }
     }
 
     private fun parseLabUpgrade(
         item: ExportLabItem,
         category: UpgradeCategory,
-        timestamp: Instant,
-        upgrades: MutableList<BuildingUpgrade>,
-        activeBoosts: MutableList<ActiveBoost>
+        now: Instant,
+        upgrades: MutableList<BuildingUpgrade>
     ) {
-        val name = nameMapping[item.data] ?: "Unknown (${item.data})"
-        val currentLevel = item.lvl
-        item.timer?.let { timerSeconds ->
-            val targetLevel = currentLevel + 1
-            val totalDuration = getLabTime(item.data, targetLevel, category)?.toDouble() ?: (timerSeconds.toDouble())
-            val endTime = timestamp.plus(timerSeconds.toLong().seconds)
-
-            val upgrade = BuildingUpgrade(
-                dataId = item.data,
-                name = name,
-                targetLevel = targetLevel,
-                endTime = endTime,
-                category = category,
-                startTime = timestamp.minus(totalDuration.toLong().seconds),
-                totalDuration = totalDuration,
-                sourceExportTimer = timerSeconds
+        val timer = item.timer
+        if (timer != null && timer > 0) {
+            val name = resolveName(item.data, "Laboratorio")
+            val targetLevel = item.lvl + 1
+            val endTime = now.plus(timer.toLong().seconds)
+            upgrades.add(
+                BuildingUpgrade(
+                    dataId = item.data,
+                    name = name,
+                    targetLevel = targetLevel,
+                    endTime = endTime,
+                    category = category,
+                    startTime = now,
+                    totalDuration = timer.toDouble(),
+                    sourceExportTimer = timer
+                )
             )
-            upgrades.add(upgrade)
+        }
+    }
+
+    private fun parseGuardian(
+        guardian: ExportGuardian,
+        now: Instant,
+        upgrades: MutableList<BuildingUpgrade>
+    ) {
+        val timer = guardian.timer
+        if (timer != null && timer > 0) {
+            val name = resolveName(guardian.data, "Guardiano")
+            val targetLevel = (guardian.lvl ?: 0) + 1
+            val endTime = now.plus(timer.toLong().seconds)
+            upgrades.add(
+                BuildingUpgrade(
+                    dataId = guardian.data,
+                    name = name,
+                    targetLevel = targetLevel,
+                    endTime = endTime,
+                    category = UpgradeCategory.BUILDER_VILLAGE,
+                    startTime = now,
+                    totalDuration = timer.toDouble(),
+                    usesGoblin = guardian.extra == true,
+                    sourceExportTimer = timer
+                )
+            )
         }
     }
 
     private fun parseHelper(
         helper: ExportHelper,
-        activeBoosts: MutableList<ActiveBoost>,
         profile: PlayerAccount
     ) {
-        // Helper cooldown tracking
         helper.helperCooldown?.let { cooldownSeconds ->
             val expiresAt = Clock.System.now().plus(cooldownSeconds.toLong().seconds)
             profile.helperCooldownOverrides = profile.helperCooldownOverrides + (helper.data to expiresAt)
         }
     }
 
-    private fun getBuildTime(dataId: Int, targetLevel: Int, category: UpgradeCategory): Int? {
-        // First try exact level match
-        val times = buildTimes[dataId]
-        return times?.getOrElse(targetLevel) { 
-            // Find closest level if exact not found
-            times.entries.minByOrNull { abs(it.key - targetLevel) }?.value 
-        }
+    private fun resolveName(dataId: Int, fallbackPrefix: String): String {
+        return nameMapping[dataId]
+            ?: buildingJsonMap[dataId.toString()]?.displayName
+            ?: "$fallbackPrefix ($dataId)"
     }
 
-    private fun getLabTime(dataId: Int, targetLevel: Int, category: UpgradeCategory): Int? {
-        val times = labTimes[dataId]
-        return times?.getOrElse(targetLevel) { 
-            times.entries.minByOrNull { abs(it.key - targetLevel) }?.value 
+    private fun getBuildTime(dataId: Int, targetLevel: Int, category: UpgradeCategory): Int? {
+        val times = buildTimes[dataId]
+        return times?.getOrElse(targetLevel) {
+            times.entries.minByOrNull { abs(it.key - targetLevel) }?.value
         }
     }
 

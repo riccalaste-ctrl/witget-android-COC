@@ -63,17 +63,18 @@ data class BuildingUpgrade(
     @Ignore
     fun timeRemaining(referenceDate: Instant = Clock.System.now()): String {
         val remaining = endTime - referenceDate
-        if (remaining <= Duration.ZERO) return "Complete"
+        if (remaining <= Duration.ZERO) return "Completato"
 
         val days = remaining.inWholeDays
-        val hours = remaining.inWholeHours % 24
-        val minutes = remaining.inWholeMinutes % 60
+        val hours = (remaining.inWholeHours % 24).toInt()
+        val minutes = (remaining.inWholeMinutes % 60).toInt()
+        val seconds = (remaining.inWholeSeconds % 60).toInt()
 
         return when {
-            days > 0 -> "$days d $hours h"
-            hours > 0 -> "$hours h $minutes m"
-            minutes > 0 -> "$minutes m ${remaining.inWholeSeconds % 60} s"
-            else -> "${remaining.inWholeSeconds} s"
+            days > 0 -> "${days}g ${hours}h ${minutes}m ${seconds}s"
+            hours > 0 -> "${hours}h ${minutes}m ${seconds}s"
+            minutes > 0 -> "${minutes}m ${seconds}s"
+            else -> "${seconds}s"
         }
     }
 

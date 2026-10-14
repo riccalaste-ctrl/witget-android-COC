@@ -2,6 +2,7 @@
 
 package com.zacatac.clashboard.ui.importdata
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,8 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +45,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ImportScreen(
     onImportComplete: () -> Unit,
+    onBackClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -50,12 +57,31 @@ fun ImportScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) {
         TopAppBar(
-            title = { Text("Import Village Data", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            title = {
+                Text(
+                    "Importa Dati Villaggio",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = onBackClick) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Indietro",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            )
         )
 
         Column(
@@ -63,26 +89,35 @@ fun ImportScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Paste your Clash of Clans JSON export below:", fontSize = 14.sp)
+            Text(
+                "Incolla qui sotto il file JSON esportato da Clash of Clans:",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onBackground
+            )
 
             OutlinedTextField(
                 value = jsonText,
                 onValueChange = { jsonText = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp),
+                    .height(240.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                 singleLine = false,
-                placeholder = { Text("Paste JSON here...") }
+                placeholder = {
+                    Text(
+                        "Incolla qui il JSON...",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             )
 
             OutlinedButton(
                 onClick = {
                     val text = clipboard.getText()?.text
                     if (text.isNullOrBlank()) {
-                        errorMessage = "Clipboard is empty. Copy the JSON export first."
+                        errorMessage = "Appunti vuoti. Copia prima il JSON esportato."
                     } else {
                         jsonText = text.trim()
                         errorMessage = null
@@ -91,14 +126,15 @@ fun ImportScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isImporting
             ) {
-                Text("Paste from Clipboard")
+                Text("Incolla dagli Appunti")
             }
 
             errorMessage?.let { msg ->
                 Text(
                     text = msg,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 4.dp)
                 )
             }
 
@@ -113,11 +149,10 @@ fun ImportScreen(
                     scope.launch {
                         try {
                             JsonImporter.importFromJson(context, jsonText.trim())
-                            // Refresh widgets right away with the new data
                             WidgetUpdateWorker.scheduleImmediateUpdate(context)
                             onImportComplete()
                         } catch (e: Exception) {
-                            errorMessage = "Import failed: ${e.message ?: e.javaClass.simpleName}"
+                            errorMessage = "Importazione fallita: ${e.message ?: e.javaClass.simpleName}"
                         } finally {
                             isImporting = false
                         }
@@ -128,7 +163,7 @@ fun ImportScreen(
                     .padding(top = 8.dp),
                 enabled = !isImporting && jsonText.isNotBlank()
             ) {
-                Text("Import")
+                Text("Importa nel Villaggio")
             }
         }
     }

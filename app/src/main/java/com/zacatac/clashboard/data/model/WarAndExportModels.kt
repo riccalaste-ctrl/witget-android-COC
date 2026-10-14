@@ -1,93 +1,84 @@
 package com.zacatac.clashboard.data.model
 
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.max
-import kotlin.math.min
 
+// Clan War Models
 @Serializable
-data class WarDetails(
-    val state: String,
-    val teamSize: Int,
-    val attacksPerMember: Int? = null,
-    val battleModifier: String? = null,
+data class WarResponse(
+    val state: String? = null,
+    val clan: ClanWarMember? = null,
+    val opponent: ClanWarMember? = null,
     val preparationStartTime: String? = null,
     val startTime: String? = null,
     val endTime: String? = null,
-    val clan: WarClan? = null,
-    val opponent: WarClan? = null
+    val teamSize: Int? = null,
+    val attacksPerMember: Int? = null,
+    val battleModifier: String? = null
 )
 
 @Serializable
-data class WarClan(
-    val tag: String,
-    val name: String,
-    val badgeUrls: BadgeUrls,
-    val clanLevel: Int,
+data class ClanWarMember(
+    val tag: String? = null,
+    val name: String? = null,
+    val badgeUrls: BadgeUrls? = null,
+    val clanLevel: Int? = null,
     val attacks: Int? = null,
     val stars: Int? = null,
     val destructionPercentage: Double? = null,
-    val members: List<WarMember>? = null
+    val members: List<ClanMember>? = null
 )
 
 @Serializable
-data class WarMember(
-    val tag: String,
-    val name: String,
+data class ClanMember(
+    val tag: String? = null,
+    val name: String? = null,
     val townhallLevel: Int? = null,
     val mapPosition: Int? = null,
-    val attacks: List<WarAttack>? = null,
+    val attacks: List<ClanAttack>? = null,
     val opponentAttacks: Int? = null,
-    val bestOpponentAttack: WarAttack? = null
+    val bestOpponentAttack: ClanAttack? = null
 )
 
 @Serializable
-data class WarAttack(
+data class ClanAttack(
     val attackerTag: String? = null,
     val defenderTag: String? = null,
     val stars: Int? = null,
-    val destructionPercentage: Int? = null,
+    val destructionPercentage: Double? = null,
     val order: Int? = null,
     val duration: Int? = null
 )
 
 @Serializable
-data class ClanStats(
-    val tag: String,
-    val name: String,
-    val type: String? = null,
-    val description: String? = null,
-    val location: ClanLocation? = null,
-    val isFamilyFriendly: Boolean? = null,
-    val badgeUrls: BadgeUrls,
-    val clanLevel: Int,
-    val clanPoints: Int? = null,
-    val clanBuilderBasePoints: Int? = null,
-    val clanCapitalPoints: Int? = null,
-    val clanCapital: ClanCapital? = null,
-    val capitalLeague: ClanLeague? = null,
-    val requiredTrophies: Int? = null,
-    val warFrequency: String? = null,
-    val warWinStreak: Int? = null,
-    val warWins: Int? = null,
-    val warTies: Int? = null,
-    val warLosses: Int? = null,
-    val warLeague: ClanLeague? = null,
-    val members: Int? = null
+data class WarDetails(
+    val state: String? = null,
+    val clan: ClanWarMember? = null,
+    val opponent: ClanWarMember? = null,
+    val preparationStartTime: String? = null,
+    val startTime: String? = null,
+    val endTime: String? = null,
+    val teamSize: Int? = null,
+    val attacksPerMember: Int? = null,
+    val battleModifier: String? = null
 )
 
 @Serializable
-data class ClanLocation(
+data class PlayerClan(
+    val tag: String? = null,
+    val name: String? = null,
+    val clanLevel: Int? = null,
+    val badgeUrls: BadgeUrls? = null
+)
+
+@Serializable
+data class PlayerLeague(
     val id: Int? = null,
     val name: String? = null,
-    val isCountry: Boolean? = null,
-    val countryCode: String? = null
-)
-
-@Serializable
-data class ClanLeague(
-    val id: Int? = null,
-    val name: String? = null
+    val iconUrls: BadgeUrls? = null
 )
 
 @Serializable
@@ -107,7 +98,7 @@ data class WarLeagueRound(
     val warTags: List<String>? = null
 )
 
-// Deep JSON Export Models
+// Deep JSON Export Models with Supercell exact keys
 @Serializable
 data class CoCExport(
     val tag: String? = null,
@@ -121,6 +112,7 @@ data class CoCExport(
     val heroes: List<ExportHero>? = null,
     val heroes2: List<ExportHero>? = null,
     val pets: List<ExportPet>? = null,
+    @SerialName("siege_machines")
     val siegeMachines: List<ExportSiegeMachine>? = null,
     val units: List<ExportUnit>? = null,
     val units2: List<ExportUnit>? = null,
@@ -222,6 +214,7 @@ interface ExportLabItem {
 data class ExportHelper(
     val data: Int,
     val lvl: Int,
+    @SerialName("helper_cooldown")
     val helperCooldown: Int? = null
 )
 
@@ -273,110 +266,8 @@ data class ParsedMiniLevelLevel(
 data class RemainingBuildingUpgrade(
     val id: Int,
     val name: String,
-    val currentLevel: Int,
-    val targetLevel: Int,
+    val fromLevel: Int,
+    val toLevel: Int,
     val buildTimeSeconds: Int,
-    val buildResource: String,
-    val buildCost: Int
+    val isSupercharge: Boolean = false
 )
-
-@Serializable
-data class ResourceTotals(
-    var gold: Int = 0,
-    var elixir: Int = 0,
-    var darkElixir: Int = 0
-) {
-    fun add(resource: String, amount: Int) {
-        val key = resource.lowercase()
-        when {
-            key.contains("dark") -> darkElixir += amount
-            key.contains("elixir") -> elixir += amount
-            key.contains("gold") -> gold += amount
-        }
-    }
-
-    operator fun plus(other: ResourceTotals): ResourceTotals {
-        return ResourceTotals(
-            gold = gold + other.gold,
-            elixir = elixir + other.elixir,
-            darkElixir = darkElixir + other.darkElixir
-        )
-    }
-
-    val totalValue: Int
-        get() = gold + elixir + darkElixir
-}
-
-data class CategoryProgress(
-    val id: String,
-    val title: String,
-    val remainingTime: Double,
-    val totalTime: Double,
-    val remainingCost: ResourceTotals,
-    val totalCost: ResourceTotals
-) {
-    val completion: Double
-        get() {
-            if (id == "walls") {
-                val total = max(totalCost.totalValue, 1).toDouble()
-                return max(0.0, min(1.0, 1.0 - (remainingCost.totalValue.toDouble() / total)))
-            }
-            if (totalTime <= 0) return 1.0
-            return max(0.0, min(1.0, 1.0 - (remainingTime / totalTime)))
-        }
-}
-
-data class TownHallProgress(
-    val id: Int,
-    val level: Int,
-    val categories: List<CategoryProgress>
-) {
-    val overallCompletion: Double
-        get() {
-            if (categories.isEmpty()) return 0.0
-            var weightedSum = 0.0
-            var weightTotal = 0.0
-            for (category in categories) {
-                val weight = max(category.totalCost.totalValue, 1).toDouble()
-                weightedSum += category.completion * weight
-                weightTotal += weight
-            }
-            if (weightTotal <= 0) return 0.0
-            return weightedSum / weightTotal
-        }
-
-    val remainingCosts: ResourceTotals
-        get() = categories.fold(ResourceTotals()) { acc, cat -> acc + cat.remainingCost }
-
-    val remainingTime: Double
-        get() = categories.sumOf { it.remainingTime }
-}
-
-@Serializable
-data class TownHallLevelCounts(
-    val level: Int,
-    val counts: Map<String, Int>
-)
-
-data class ParsedUnitLevelData(
-    val level: Int,
-    val upgradeTimeSeconds: Int,
-    val upgradeCost: Int,
-    val upgradeResource: String,
-    val laboratoryLevel: Int
-)
-
-data class ParsedUnitData(
-    val id: Int,
-    val name: String,
-    val levels: List<ParsedUnitLevelData>
-) {
-    val levelsByLevel: Map<Int, ParsedUnitLevelData>
-        get() = levels.associateBy { it.level }
-
-    fun maxLevelForLabLevel(labLevel: Int): Int {
-        return levels
-            .filter { it.laboratoryLevel <= labLevel && it.level > 0 }
-            .maxByOrNull { it.level }?.level ?: 0
-    }
-}

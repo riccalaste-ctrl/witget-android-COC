@@ -4,6 +4,9 @@ import android.content.Context
 import com.zacatac.clashboard.data.database.AppDatabase
 import com.zacatac.clashboard.data.model.PlayerAccount
 import com.zacatac.clashboard.data.parser.CoCExportParser
+import com.zacatac.clashboard.widget.UpgradeAlarmScheduler
+import com.zacatac.clashboard.widget.WidgetTickScheduler
+import com.zacatac.clashboard.widget.WidgetUpdateWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -28,6 +31,12 @@ object JsonImporter {
         )
 
         ProfileRepository(AppDatabase.getDatabase(context)).insertProfile(profile)
+
+        // Refresh widgets right now and schedule countdown tick + completion alarms
+        WidgetUpdateWorker.scheduleImmediateUpdate(context)
+        WidgetTickScheduler.start(context)
+        UpgradeAlarmScheduler.scheduleForProfile(context, profile)
+
         profile
     }
 }

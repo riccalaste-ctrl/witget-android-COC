@@ -10,6 +10,8 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.LinearProgressIndicator
 import androidx.glance.appwidget.provideContent
+import androidx.glance.background
+import androidx.glance.layout.fillMaxSize
 import androidx.glance.appwidget.updateAll
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
@@ -37,39 +39,36 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import java.text.SimpleDateFormat
 import java.util.Locale
-import kotlin.math.max
-import kotlin.math.min
 
 class WarStatusWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, glanceId: GlanceId) {
-        val war = getWarForWidget(context) ?: run {
-            provideContent { WarStatusContent(null) }
-            return
+        val war = try {
+            getWarForWidget(context)
+        } catch (e: Throwable) {
+            null
         }
         provideContent { WarStatusContent(war) }
     }
 
     private suspend fun getWarForWidget(context: Context): WarDetails? = withContext(Dispatchers.IO) {
-        val database = AppDatabase.getDatabase(context)
-        val profiles = database.playerAccountDao().getAllProfiles().first()
-
-        if (profiles.isEmpty()) return@withContext null
-
-        val autoProfile = WidgetConfigStore.getWarWidgetAutoProfile(context)
-        val profile: PlayerAccount? = if (autoProfile) profiles.firstOrNull() else {
-            val profileIdStr = WidgetConfigStore.getWarWidgetProfileId(context)
-            if (profileIdStr != null) profiles.firstOrNull { it.id.toString() == profileIdStr } else profiles.firstOrNull()
+        try {
+            val database = AppDatabase.getDatabase(context)
+            val profiles = database.playerAccountDao().getAllProfiles().first()
+            if (profiles.isEmpty()) return@withContext null
+            null
+        } catch (e: Throwable) {
+            null
         }
-
-        // For now, return no war data - in production this would be loaded from the API
-        // and correlated with the selected profile.
-        null
     }
 
     companion object {
         suspend fun updateAll(context: Context) {
-            WarStatusWidget().updateAll(context)
+            try {
+                WarStatusWidget().updateAll(context)
+            } catch (e: Throwable) {
+                // Ignore widget update errors
+            }
         }
     }
 }
@@ -82,7 +81,7 @@ fun WarStatusContent(war: WarDetails?) {
     if (war != null && clan != null && opponent != null) {
         val phase = warPhase(war)
         Column(
-            modifier = GlanceModifier.fillMaxWidth().padding(12.dp),
+            modifier = GlanceModifier.fillMaxSize().background(com.zacatac.clashboard.widget.WidgetWhite).padding(12.dp),
             horizontalAlignment = Alignment.Horizontal.Start
         ) {
             Row(
@@ -90,7 +89,7 @@ fun WarStatusContent(war: WarDetails?) {
                 horizontalAlignment = Alignment.Horizontal.Start
             ) {
                 Text(
-                    text = clan.name,
+                    text = clan.name ?: "Clan",
                     style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold),
                     maxLines = 1
                 )
@@ -118,11 +117,11 @@ fun WarStatusContent(war: WarDetails?) {
         }
     } else {
         Box(
-            modifier = GlanceModifier.fillMaxWidth().padding(12.dp),
+            modifier = GlanceModifier.fillMaxSize().background(com.zacatac.clashboard.widget.WidgetWhite).padding(12.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "No war data",
+                text = "Nessun dato di guerra",
                 style = TextStyle(fontSize = 10.sp, color = ColorProvider(WidgetMutedGray))
             )
         }
@@ -140,17 +139,17 @@ private fun warPhase(war: WarDetails): WarPhaseInfo {
     if (prepStart != null && start != null && now < start) {
         val total = (start - prepStart).inWholeSeconds.toDouble().coerceAtLeast(0.0)
         val progress = if (total > 0) (now - prepStart).inWholeSeconds.toDouble().coerceIn(0.0, total) / total else 0.0
-        return WarPhaseInfo("Preparation", progress)
+        return WarPhaseInfo("Preparazione", progress)
     }
     if (start != null && end != null && now >= start && now < end) {
         val total = (end - start).inWholeSeconds.toDouble().coerceAtLeast(0.0)
         val progress = if (total > 0) (now - start).inWholeSeconds.toDouble().coerceIn(0.0, total) / total else 0.0
-        return WarPhaseInfo("Battle", progress)
+        return WarPhaseInfo("Battaglia", progress)
     }
     if (end != null && now >= end) {
-        return WarPhaseInfo("Ended", 1.0)
+        return WarPhaseInfo("Terminata", 1.0)
     }
-    return WarPhaseInfo("Status", 0.0)
+    return WarPhaseInfo("Stato Guerra", 0.0)
 }
 
 private fun parseWarDate(value: String?): Instant? {
@@ -162,4 +161,8 @@ private fun parseWarDate(value: String?): Instant? {
     } catch (e: Exception) {
         null
     }
+}
+
+class WarStatusWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = WarStatusWidget()
 }
