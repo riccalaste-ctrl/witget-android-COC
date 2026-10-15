@@ -78,148 +78,125 @@ data class BuildingUpgrade(
         }
     }
 
+    /** Boost-aware countdown text, used by the app so it matches the widgets. */
+    @Ignore
+    fun timeRemainingText(activeBoosts: List<ActiveBoost>, referenceDate: Instant = Clock.System.now()): String =
+        formatDurationWithSeconds(remainingSeconds(activeBoosts, referenceDate))
+
+    /**
+     * Seconds of work left, accounting for boosts. The export timer already includes boosts that
+     * were active at the export instant ([startTime]), so only boosts starting at or after
+     * [startTime] are applied on top of it.
+     */
     @Ignore
     fun remainingSeconds(activeBoosts: List<ActiveBoost>, referenceDate: Instant): Double {
-        val baseRemaining = max(0.0, (endTime - referenceDate).inWholeSeconds.toDouble())
-
-        val start = startTime
+        val baseRemaining = max(0.0, (endTime - referenceDate).inWholeMilliseconds / 1000.0)
         val now = referenceDate
-        if (now <= start) return baseRemaining
+        if (now <= startTime) return baseRemaining
 
-        // Filter boosts that affect this upgrade's category
-        val relevantBoosts = activeBoosts.mapNotNull { boost ->
-            val boostType = boost.boostType
-            if (boostType == null || category !in boostType.affectedCategories) return@mapNotNull null
-            if (boostType == BoostType.BUILDER_APPRENTICE || boostType == BoostType.LAB_ASSISTANT) {
-                if (boost.targetUpgradeId != null && boost.targetUpgradeId != id) return@mapNotNull null
-            }
-            boost
-        }
+        val relevant = relevantBoosts(activeBoosts, now)
+        if (relevant.isEmpty()) return baseRemaining
 
-        if (relevantBoosts.isEmpty()) return baseRemaining
-
-        // Build timeline of boost periods
-        val timePoints = mutableListOf<Instant>(start, now)
-        for (boost in relevantBoosts) {
-            val s = maxOf(start, boost.startTime)
+        // Split [startTime, now] at every boost boundary, then sum the boosted extra time.
+        val points = mutableListOf(startTime, now)
+        for (boost in relevant) {
+            val s = boost.startTime
             val e = minOf(now, boost.endTime)
             if (s < e) {
-                timePoints.add(s)
-                timePoints.add(e)
+                points.add(s)
+                points.add(e)
             }
         }
+        val sorted = points.filter { it >= startTime && it <= now }.distinct().sorted()
 
-        val sortedPoints = timePoints.distinct().sorted()
-        if (sortedPoints.size <= 1) return baseRemaining
-
-        // Calculate extra elapsed time from boosts
-        var extraElapsed = 0.0
-        for (idx in 0 until sortedPoints.size - 1) {
-            val segmentStart = sortedPoints[idx]
-            val segmentEnd = sortedPoints[idx + 1]
+        var extraSeconds = 0.0
+        for (idx in 0 until sorted.size - 1) {
+            val segmentStart = sorted[idx]
+            val segmentEnd = sorted[idx + 1]
             if (segmentEnd <= segmentStart) continue
-
-            var totalExtra = 0.0
-            var clockTowerApplied = false
-            for (boost in relevantBoosts) {
-                val boostType = boost.boostType ?: continue
-                val s = maxOf(start, boost.startTime)
-                val e = minOf(now, boost.endTime)
-                if (segmentStart < s || segmentStart >= e) continue
-
-                val level = boost.helperLevel ?: 0
-                if (boostType.isClockTowerBoost) {
-                    if (!clockTowerApplied) {
-                        totalExtra += boostType.speedMultiplier(level)
-                        clockTowerApplied = true
-                    }
-                } else {
-                    totalExtra += boostType.speedMultiplier(level)
-                }
-            }
-            extraElapsed += (segmentEnd - segmentStart).inWholeSeconds * totalExtra
+            val segmentSeconds = (segmentEnd - segmentStart).inWholeMilliseconds / 1000.0
+            extraSeconds += segmentSeconds * speedBoostAt(relevant, segmentStart)
         }
-
-        val adjustedRemaining = baseRemaining - extraElapsed
-        return max(0.0, adjustedRemaining)
+        return max(0.0, baseRemaining - extraSeconds)
     }
 
+    /** Projected completion instant, using the same boost rules as [remainingSeconds]. */
     @Ignore
     fun projectedCompletionDate(activeBoosts: List<ActiveBoost>, referenceDate: Instant = Clock.System.now()): Instant {
         val now = referenceDate
         var remainingWork = remainingSeconds(activeBoosts, now)
+        if (remainingWork <= 0.0) return now
 
-        if (activeBoosts.isEmpty() || remainingWork <= 0) {
-            return now.plus(remainingWork.toLong().seconds)
-        }
+        val relevant = relevantBoosts(activeBoosts, now).filter { it.endTime > now }
+        if (relevant.isEmpty()) return now.plus(remainingWork.seconds)
 
-        // Filter boosts that affect this upgrade's category and are still active
-        val relevantBoosts = activeBoosts.mapNotNull { boost ->
-            val boostType = boost.boostType
-            if (boostType == null || category !in boostType.affectedCategories) return@mapNotNull null
-            if (boost.endTime <= now) return@mapNotNull null
-            if (boostType == BoostType.BUILDER_APPRENTICE || boostType == BoostType.LAB_ASSISTANT) {
-                if (boost.targetUpgradeId != null && boost.targetUpgradeId != id) return@mapNotNull null
-            }
-            boost
-        }.sortedBy { it.endTime }
-
-        if (relevantBoosts.isEmpty()) {
-            return now.plus(remainingWork.toLong().seconds)
-        }
-
-        // Simulate time passing and calculate when work completes
-        var currentTime = now
-
-        // Build timeline of future boost transitions
-        val transitions = mutableListOf<Instant>(now)
-        for (boost in relevantBoosts) {
+        val transitions = mutableListOf(now)
+        for (boost in relevant) {
             if (boost.startTime > now) transitions.add(boost.startTime)
             transitions.add(boost.endTime)
         }
         val sortedTransitions = transitions.distinct().sorted()
 
-        // Process each time segment
         for (idx in 0 until sortedTransitions.size - 1) {
             val segmentStart = sortedTransitions[idx]
             val segmentEnd = sortedTransitions[idx + 1]
-
-            // Calculate effective speed multiplier for this segment
-            var speedMultiplier = 1.0
-            var clockTowerApplied = false
-
-            for (boost in relevantBoosts) {
-                val boostType = boost.boostType ?: continue
-                // Check if this boost is active during this segment
-                if (boost.startTime <= segmentStart && boost.endTime > segmentStart) {
-                    val level = boost.helperLevel ?: 0
-                    if (boostType.isClockTowerBoost) {
-                        if (!clockTowerApplied) {
-                            speedMultiplier += boostType.speedMultiplier(level)
-                            clockTowerApplied = true
-                        }
-                    } else {
-                        speedMultiplier += boostType.speedMultiplier(level)
-                    }
-                }
-            }
-
-            // How much real time passes in this segment
-            val realTime = (segmentEnd - segmentStart).inWholeSeconds
-            // How much work gets done (boosted time)
-            val workDone = realTime * speedMultiplier
-
+            val speed = 1.0 + speedBoostAt(relevant, segmentStart)
+            val realSeconds = (segmentEnd - segmentStart).inWholeMilliseconds / 1000.0
+            val workDone = realSeconds * speed
             if (workDone >= remainingWork) {
-                // Upgrade completes during this segment
-                val timeNeeded = remainingWork / speedMultiplier
-                return segmentStart.plus(timeNeeded.toLong().seconds)
+                return segmentStart.plus((remainingWork / speed).seconds)
             }
-
             remainingWork -= workDone
-            currentTime = segmentEnd
         }
+        return sortedTransitions.last().plus(remainingWork.seconds)
+    }
 
-        // If we still have work after all boosts expire, add unboosted time
-        return currentTime.plus(remainingWork.toLong().seconds)
+    /** Boosts that affect this upgrade, were not already in the export, and are not for another upgrade. */
+    private fun relevantBoosts(activeBoosts: List<ActiveBoost>, now: Instant): List<ActiveBoost> {
+        return activeBoosts.filter { boost ->
+            val type = boost.boostType ?: return@filter false
+            if (category !in type.affectedCategories) return@filter false
+            if (boost.startTime < startTime) return@filter false
+            if (type == BoostType.BUILDER_APPRENTICE || type == BoostType.LAB_ASSISTANT) {
+                if (boost.targetUpgradeId != null && boost.targetUpgradeId != id) return@filter false
+            }
+            true
+        }
+    }
+
+    /** Sum of speed bonuses active at [at]. Clock Tower boosts do not stack with each other. */
+    private fun speedBoostAt(boosts: List<ActiveBoost>, at: Instant): Double {
+        var total = 0.0
+        var clockTowerApplied = false
+        for (boost in boosts) {
+            val type = boost.boostType ?: continue
+            if (!(boost.startTime <= at && boost.endTime > at)) continue
+            val bonus = type.speedMultiplier(boost.helperLevel ?: 0)
+            if (type.isClockTowerBoost) {
+                if (!clockTowerApplied) {
+                    total += bonus
+                    clockTowerApplied = true
+                }
+            } else {
+                total += bonus
+            }
+        }
+        return total
+    }
+}
+
+/** Formats seconds as "Xg Xh Xm Xs" (same style as the app timers). */
+fun formatDurationWithSeconds(remainingSeconds: Double): String {
+    val total = max(0L, remainingSeconds.toLong())
+    if (total <= 0L) return "Completato"
+    val days = total / 86_400
+    val hours = (total % 86_400) / 3_600
+    val minutes = (total % 3_600) / 60
+    val seconds = total % 60
+    return when {
+        days > 0 -> "${days}g ${hours}h ${minutes}m ${seconds}s"
+        hours > 0 -> "${hours}h ${minutes}m ${seconds}s"
+        minutes > 0 -> "${minutes}m ${seconds}s"
+        else -> "${seconds}s"
     }
 }

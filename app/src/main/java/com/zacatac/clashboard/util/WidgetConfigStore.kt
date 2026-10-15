@@ -21,10 +21,6 @@ object WidgetConfigStore {
     private val CLOSEST_WIDGET_AUTO_PROFILE = booleanPreferencesKey("closest_widget_auto_profile")
     private val CLOSEST_WIDGET_UPGRADE_TYPE = stringPreferencesKey("closest_widget_upgrade_type")
 
-    // Keys for war widget
-    private val WAR_WIDGET_PROFILE_ID = stringPreferencesKey("war_widget_profile_id")
-    private val WAR_WIDGET_AUTO_PROFILE = booleanPreferencesKey("war_widget_auto_profile")
-
     private val Context.dataStore by preferencesDataStore(STORE_NAME)
 
     suspend fun getMainWidgetProfileId(context: Context): String? = context.dataStore.data
@@ -72,21 +68,4 @@ object WidgetConfigStore {
         context.dataStore.edit { it[CLOSEST_WIDGET_UPGRADE_TYPE] = type.value }
     }
 
-    suspend fun getWarWidgetProfileId(context: Context): String? = context.dataStore.data
-        .map { it[WAR_WIDGET_PROFILE_ID] }
-        .first()
-
-    suspend fun setWarWidgetProfileId(context: Context, profileId: String?) {
-        context.dataStore.edit {
-            if (profileId != null) it[WAR_WIDGET_PROFILE_ID] = profileId else it.remove(WAR_WIDGET_PROFILE_ID)
-        }
-    }
-
-    suspend fun getWarWidgetAutoProfile(context: Context): Boolean = context.dataStore.data
-        .map { it[WAR_WIDGET_AUTO_PROFILE] ?: true }
-        .first()
-
-    suspend fun setWarWidgetAutoProfile(context: Context, auto: Boolean) {
-        context.dataStore.edit { it[WAR_WIDGET_AUTO_PROFILE] = auto }
-    }
 }

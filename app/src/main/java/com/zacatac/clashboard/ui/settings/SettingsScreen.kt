@@ -177,6 +177,7 @@ fun SettingsScreen(
                     isDestructive = true,
                     onClick = {
                         scope.launch {
+                            UpgradeAlarmScheduler.cancelAll(context)
                             AppDatabase.getDatabase(context).clearAllTables()
                             WidgetTickReceiver.updateAllWidgets(context)
                             Toast.makeText(context, "Dati rimossi. Riapri l'app e importa il JSON.", Toast.LENGTH_LONG).show()

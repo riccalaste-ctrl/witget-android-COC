@@ -13,16 +13,13 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.zacatac.clashboard.ui.MainActivity
 import com.zacatac.clashboard.R
 import com.zacatac.clashboard.data.database.AppDatabase
 import com.zacatac.clashboard.data.model.PlayerAccount
+import com.zacatac.clashboard.ui.MainActivity
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import java.util.UUID
 import kotlin.random.Random
 
 const val CHANNEL_UPGRADES = "upgrade_complete"
@@ -30,7 +27,7 @@ const val CHANNEL_BOOSTS = "boost_expire"
 const val ACTION_UPGRADE_COMPLETE = "com.zacatac.clashboard.action.UPGRADE_COMPLETE"
 const val ACTION_BOOST_EXPIRE = "com.zacatac.clashboard.action.BOOST_EXPIRE"
 
-/** Receiver fired exactly when an upgrade countdown ends: posts a notification. */
+/** Receiver fired when an upgrade completes or a boost expires: posts a notification. */
 class UpgradeAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -42,9 +39,8 @@ class UpgradeAlarmReceiver : BroadcastReceiver() {
         val text = if (kind == KIND_UPGRADE) {
             "Upgrade completato a livello $level"
         } else {
-            "Boost scaduto per $name — riattivalo su Clash of Clans se serve"
+            "Boost scaduto — riattivalo su Clash of Clans se serve"
         }
-
         postNotification(context, kind, title, text)
     }
 
@@ -69,7 +65,8 @@ class UpgradeAlarmReceiver : BroadcastReceiver() {
             context, 0, openApp, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val builder = NotificationCompat.Builder(context, kind)
+        val channel = if (kind == KIND_BOOST) CHANNEL_BOOSTS else CHANNEL_UPGRADES
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_import)
             .setContentTitle(title)
             .setContentText(text)
@@ -81,7 +78,6 @@ class UpgradeAlarmReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val EXTRA_UPGRADE_ID = "upgrade_id"
         const val EXTRA_UPGRADE_NAME = "upgrade_name"
         const val EXTRA_TARGET_LEVEL = "target_level"
         const val EXTRA_KIND = "kind"
@@ -90,38 +86,84 @@ class UpgradeAlarmReceiver : BroadcastReceiver() {
     }
 }
 
+/**
+ * Owns the completion and boost-expiry alarms. Each registered alarm is remembered per profile
+ * (action + request code) so it can be cancelled when the village is re-imported, deleted or reset.
+ */
 object UpgradeAlarmScheduler {
+    private const val PREFS = "clashboard_alarms"
+    private const val KEY_PREFIX = "codes_"
 
-    /** Schedules a completion alarm for every active upgrade in [profile]. */
+    /** Replaces this village's alarms with the ones planned from its current upgrades and settings. */
     suspend fun scheduleForProfile(context: Context, profile: PlayerAccount) {
+        cancelForProfile(context, profile.id)
+        val plans = planProfileAlarms(profile, Clock.System.now())
+        if (plans.isEmpty()) return
+
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val now = Clock.System.now()
-
-        for ((index, upgrade) in profile.activeUpgrades.sortedBy { it.endTime }.withIndex()) {
-            val delayMs = upgrade.endTime.toEpochMilliseconds() - now.toEpochMilliseconds()
-            if (delayMs <= 0) continue
-
+        val registered = mutableSetOf<String>()
+        for (plan in plans) {
             val intent = Intent(context, UpgradeAlarmReceiver::class.java).apply {
-                action = ACTION_UPGRADE_COMPLETE
-                putExtra(UpgradeAlarmReceiver.EXTRA_UPGRADE_ID, upgrade.id.toString())
-                putExtra(UpgradeAlarmReceiver.EXTRA_UPGRADE_NAME, upgrade.name)
-                putExtra(UpgradeAlarmReceiver.EXTRA_TARGET_LEVEL, upgrade.targetLevel)
-                putExtra(UpgradeAlarmReceiver.EXTRA_KIND, UpgradeAlarmReceiver.KIND_UPGRADE)
+                action = plan.action
+                putExtra(UpgradeAlarmReceiver.EXTRA_UPGRADE_NAME, plan.name)
+                putExtra(UpgradeAlarmReceiver.EXTRA_TARGET_LEVEL, plan.level)
+                putExtra(UpgradeAlarmReceiver.EXTRA_KIND, plan.kind)
             }
             val pending = PendingIntent.getBroadcast(
                 context,
-                REQUEST_CODE_BASE + index,
+                plan.requestCode,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            scheduleAlarm(alarmManager, upgrade.endTime.toEpochMilliseconds(), pending)
+            scheduleAlarm(alarmManager, plan.triggerAtMs, pending)
+            registered += "${plan.action}#${plan.requestCode}"
         }
+        prefs(context).edit().putStringSet(keyFor(profile.id), registered).apply()
     }
 
-    /** Schedules alarms for all stored profiles (called at app start). */
+    /** Cancels every alarm registered for [profileId]. */
+    fun cancelForProfile(context: Context, profileId: UUID) {
+        val prefs = prefs(context)
+        val key = keyFor(profileId)
+        cancelEntries(context, prefs.getStringSet(key, emptySet()).orEmpty())
+        prefs.edit().remove(key).apply()
+    }
+
+    /** Cancels every alarm of every village (used before a full reset or a full re-plan). */
+    fun cancelAll(context: Context) {
+        val prefs = prefs(context)
+        for ((key, value) in prefs.all) {
+            if (!key.startsWith(KEY_PREFIX)) continue
+            cancelEntries(context, (value as? Set<*>)?.filterIsInstance<String>().orEmpty().toSet())
+        }
+        prefs.edit().clear().apply()
+    }
+
+    /** Re-plans alarms for every stored village, dropping alarms of villages that no longer exist. */
     suspend fun scheduleForAllProfiles(context: Context) {
+        cancelAll(context)
         val profiles = AppDatabase.getDatabase(context).playerAccountDao().getAllProfiles().first()
         profiles.forEach { scheduleForProfile(context, it) }
+    }
+
+    private fun cancelEntries(context: Context, entries: Set<String>) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        for (entry in entries) {
+            val parts = entry.split("#", limit = 2)
+            if (parts.size != 2) continue
+            val requestCode = parts[1].toIntOrNull() ?: continue
+            val intent = Intent(context, UpgradeAlarmReceiver::class.java).apply { action = parts[0] }
+            val pending = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pending != null) {
+                alarmManager.cancel(pending)
+                pending.cancel()
+            }
+        }
     }
 
     private fun scheduleAlarm(alarmManager: AlarmManager, atEpochMs: Long, pending: PendingIntent) {
@@ -141,5 +183,7 @@ object UpgradeAlarmScheduler {
         }
     }
 
-    private const val REQUEST_CODE_BASE = 10_000
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun keyFor(profileId: UUID) = "$KEY_PREFIX$profileId"
 }

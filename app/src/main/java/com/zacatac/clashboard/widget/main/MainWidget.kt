@@ -7,9 +7,14 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
+import androidx.glance.LocalSize
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.LinearProgressIndicator
+import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.lazy.LazyColumn
+import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
 import androidx.glance.background
@@ -30,6 +35,7 @@ import androidx.glance.unit.ColorProvider
 import com.zacatac.clashboard.data.model.ActiveBoost
 import com.zacatac.clashboard.data.model.BuildingUpgrade
 import com.zacatac.clashboard.data.model.PlayerAccount
+import com.zacatac.clashboard.data.model.UpgradeCategory
 import com.zacatac.clashboard.util.WidgetConfigStore
 import com.zacatac.clashboard.widget.UpgradeImageProvider
 import com.zacatac.clashboard.widget.WidgetAccentGreen
@@ -42,8 +48,55 @@ import com.zacatac.clashboard.widget.emojiForCategory
 import com.zacatac.clashboard.widget.selectWidgetProfile
 import com.zacatac.clashboard.widget.upgradeProgressFor
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+
+/** Height below which the widget switches to the compact layout. */
+private val COMPACT_HEIGHT_THRESHOLD = 220.dp
+
+/**
+ * Builders panel summary, computed from the stored profile.
+ * Busy counts are capped to the builder total; free = total - busy.
+ */
+data class MainWidgetSummary(
+    val villageBusy: Int,
+    val villageTotal: Int,
+    val baseBusy: Int,
+    val starLabBusy: Boolean,
+    val labBusy: Boolean,
+    val petBusy: Boolean,
+    val rows: List<BuildingUpgrade>
+) {
+    val villageFree: Int get() = (villageTotal - villageBusy).coerceAtLeast(0)
+}
+
+/** Pure function (no Android types) so it can be unit-tested. */
+fun buildMainWidgetSummary(profile: PlayerAccount, now: Instant): MainWidgetSummary {
+    val active = profile.activeUpgrades.filter { it.endTime > now }.sortedBy { it.endTime }
+    val counts = active.groupingBy { it.category }.eachCount()
+    val villageTotal = profile.builderCount.coerceAtLeast(1)
+    return MainWidgetSummary(
+        villageBusy = minOf(counts[UpgradeCategory.BUILDER_VILLAGE] ?: 0, villageTotal),
+        villageTotal = villageTotal,
+        baseBusy = counts[UpgradeCategory.BUILDER_BASE] ?: 0,
+        starLabBusy = (counts[UpgradeCategory.STAR_LAB] ?: 0) > 0,
+        labBusy = (counts[UpgradeCategory.LAB] ?: 0) > 0,
+        petBusy = (counts[UpgradeCategory.PETS] ?: 0) > 0,
+        rows = active
+    )
+}
+
+/**
+ * A progress bar is only meaningful when the base duration is known. Items without a base
+ * duration store totalDuration == sourceExportTimer (remaining time at import), so their bar
+ * would always start from 0%.
+ */
+fun hasReliableProgress(upgrade: BuildingUpgrade): Boolean =
+    upgrade.totalDuration > (upgrade.sourceExportTimer ?: 0).toDouble()
 
 class MainWidget : GlanceAppWidget() {
+
+    // Exact sizing: LocalSize gives the real widget size, so the layout can adapt to it.
+    override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, glanceId: GlanceId) {
         val profile = try {
@@ -74,8 +127,10 @@ class MainWidget : GlanceAppWidget() {
 
 @Composable
 fun MainWidgetContent(profile: PlayerAccount?, imageProvider: UpgradeImageProvider) {
+    val compact = LocalSize.current.height < COMPACT_HEIGHT_THRESHOLD
+
     Column(
-        modifier = GlanceModifier.fillMaxSize().background(WidgetWhite).padding(8.dp),
+        modifier = GlanceModifier.fillMaxSize().background(WidgetWhite).cornerRadius(20.dp).padding(10.dp),
         horizontalAlignment = Alignment.Horizontal.Start
     ) {
         if (profile == null) {
@@ -98,62 +153,92 @@ fun MainWidgetContent(profile: PlayerAccount?, imageProvider: UpgradeImageProvid
         }
 
         val now = Clock.System.now()
-        val active = profile.activeUpgrades.filter { it.endTime > now }.sortedBy { it.endTime }
+        val summary = buildMainWidgetSummary(profile, now)
 
-        Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.Vertical.CenterVertically) {
-            Text(
-                text = profile.widgetDisplayName,
-                style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = WidgetDarkText),
-                maxLines = 1
-            )
-            Spacer(modifier = GlanceModifier.defaultWeight())
-            Text(
-                text = "${active.size} attivi",
-                style = TextStyle(fontSize = 10.sp, color = WidgetSubText)
-            )
-        }
+        Text(
+            text = profile.widgetDisplayName,
+            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = WidgetDarkText),
+            maxLines = 1
+        )
+        BuildersSummary(summary, compact)
         Spacer(modifier = GlanceModifier.height(4.dp))
 
-        if (active.isEmpty()) {
-            Column(
-                modifier = GlanceModifier.fillMaxSize(),
-                verticalAlignment = Alignment.Vertical.CenterVertically,
-                horizontalAlignment = Alignment.Horizontal.CenterHorizontally
-            ) {
-                Text(
-                    text = "Nessun upgrade in corso",
-                    style = TextStyle(fontSize = 11.sp, color = WidgetSubText)
-                )
-            }
+        if (summary.rows.isEmpty()) {
+            Text(
+                text = "Nessun upgrade in corso",
+                style = TextStyle(fontSize = 11.sp, color = WidgetSubText)
+            )
         } else {
-            // Mostra fino a 5 upgrade per evitare il limite di RemoteViews in Glance
-            val displayed = active.take(5)
-            for (upgrade in displayed) {
-                UpgradeCountdownRow(upgrade, profile.activeBoosts, imageProvider)
-            }
-            if (active.size > 5) {
-                Text(
-                    text = "+ altri ${active.size - 5} upgrade nell'app",
-                    style = TextStyle(fontSize = 8.sp, color = WidgetSubText),
-                    modifier = GlanceModifier.padding(top = 2.dp)
-                )
+            LazyColumn(modifier = GlanceModifier.fillMaxWidth()) {
+                items(summary.rows, itemId = { it.id.hashCode().toLong() }) { upgrade ->
+                    UpgradeCountdownRow(upgrade, profile.activeBoosts, imageProvider, now, compact)
+                }
             }
         }
     }
 }
 
 @Composable
+fun BuildersSummary(summary: MainWidgetSummary, compact: Boolean) {
+    val free = summary.villageFree
+    Row(
+        modifier = GlanceModifier
+            .padding(bottom = 2.dp)
+            .background(WidgetCardBg)
+            .cornerRadius(10.dp)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.Vertical.CenterVertically
+    ) {
+        Text(
+            text = "Villaggio ${summary.villageBusy}/${summary.villageTotal}",
+            style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = WidgetDarkText)
+        )
+        Spacer(modifier = GlanceModifier.width(6.dp))
+        Text(
+            text = if (free > 0) "$free liberi" else "tutti occupati",
+            style = TextStyle(
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = ColorProvider(if (free > 0) WidgetAccentOrange else WidgetAccentGreen)
+            )
+        )
+    }
+    if (!compact) {
+        Text(
+            text = "Base: ${summary.baseBusy} in corso · Star Lab: ${busyLabel(summary.starLabBusy)} · " +
+                "Lab: ${busyLabel(summary.labBusy)} · Pet: ${busyLabel(summary.petBusy)}",
+            style = TextStyle(fontSize = 8.sp, color = WidgetSubText),
+            maxLines = 1
+        )
+    }
+}
+
+private fun busyLabel(busy: Boolean): String = if (busy) "in corso" else "libero"
+
+private fun categoryShortLabel(category: UpgradeCategory): String = when (category) {
+    UpgradeCategory.BUILDER_VILLAGE -> "Villaggio"
+    UpgradeCategory.BUILDER_BASE -> "Base"
+    UpgradeCategory.STAR_LAB -> "Star Lab"
+    UpgradeCategory.LAB -> "Lab"
+    UpgradeCategory.PETS -> "Pet"
+}
+
+@Composable
 fun UpgradeCountdownRow(
     upgrade: BuildingUpgrade,
     activeBoosts: List<ActiveBoost>,
-    imageProvider: UpgradeImageProvider
+    imageProvider: UpgradeImageProvider,
+    now: Instant,
+    compact: Boolean
 ) {
+    val remaining = upgrade.remainingSeconds(activeBoosts, now)
     Column(
         modifier = GlanceModifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .background(WidgetCardBg)
-            .padding(horizontal = 6.dp, vertical = 3.dp)
+            .cornerRadius(12.dp)
+            .padding(horizontal = 8.dp, vertical = 5.dp)
     ) {
         Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.Vertical.CenterVertically) {
             val icon = imageProvider.providerForOrNull(upgrade.name)
@@ -161,29 +246,38 @@ fun UpgradeCountdownRow(
                 Image(
                     provider = icon,
                     contentDescription = upgrade.name,
-                    modifier = GlanceModifier.size(20.dp)
+                    modifier = GlanceModifier.size(22.dp)
                 )
             } else {
                 Text(text = emojiForCategory(upgrade.category), style = TextStyle(fontSize = 12.sp))
             }
             Spacer(modifier = GlanceModifier.width(4.dp))
-            Text(
-                text = upgrade.name,
-                style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = WidgetDarkText),
-                maxLines = 1
-            )
-            Spacer(modifier = GlanceModifier.defaultWeight())
-            val remaining = upgrade.remainingSeconds(activeBoosts, Clock.System.now())
+            Column(modifier = GlanceModifier.defaultWeight()) {
+                Text(
+                    text = upgrade.name,
+                    style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = WidgetDarkText),
+                    maxLines = 1
+                )
+                if (!compact) {
+                    Text(
+                        text = "${categoryShortLabel(upgrade.category)} · ${upgrade.levelDisplayText}",
+                        style = TextStyle(fontSize = 8.sp, color = WidgetSubText),
+                        maxLines = 1
+                    )
+                }
+            }
             Text(
                 text = formatCountdown(remaining),
                 style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = ColorProvider(WidgetAccentOrange))
             )
         }
-        LinearProgressIndicator(
-            progress = upgradeProgressFor(upgrade, activeBoosts),
-            modifier = GlanceModifier.fillMaxWidth().height(2.dp).padding(top = 2.dp),
-            color = ColorProvider(WidgetAccentGreen)
-        )
+        if (!compact && hasReliableProgress(upgrade)) {
+            LinearProgressIndicator(
+                progress = upgradeProgressFor(upgrade, activeBoosts, now),
+                modifier = GlanceModifier.fillMaxWidth().height(3.dp).padding(top = 4.dp),
+                color = ColorProvider(WidgetAccentGreen)
+            )
+        }
     }
 }
 

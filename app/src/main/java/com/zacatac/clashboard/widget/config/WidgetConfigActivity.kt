@@ -15,7 +15,6 @@ import com.zacatac.clashboard.data.model.UpgradeCategory
 import com.zacatac.clashboard.util.WidgetConfigStore
 import com.zacatac.clashboard.widget.closest.ClosestUpgradeWidget
 import com.zacatac.clashboard.widget.main.MainWidget
-import com.zacatac.clashboard.widget.war.WarStatusWidget
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -74,7 +73,6 @@ class WidgetConfigActivity : AppCompatActivity() {
             val autoProfile = when (widgetType) {
                 WidgetType.MAIN -> WidgetConfigStore.getMainWidgetAutoProfile(this@WidgetConfigActivity)
                 WidgetType.CLOSEST_UPGRADE -> WidgetConfigStore.getClosestWidgetAutoProfile(this@WidgetConfigActivity)
-                WidgetType.WAR -> WidgetConfigStore.getWarWidgetAutoProfile(this@WidgetConfigActivity)
             }
             if (autoProfile) {
                 spinner.setSelection(0)
@@ -82,7 +80,6 @@ class WidgetConfigActivity : AppCompatActivity() {
                 val profileIdStr = when (widgetType) {
                     WidgetType.MAIN -> WidgetConfigStore.getMainWidgetProfileId(this@WidgetConfigActivity)
                     WidgetType.CLOSEST_UPGRADE -> WidgetConfigStore.getClosestWidgetProfileId(this@WidgetConfigActivity)
-                    WidgetType.WAR -> WidgetConfigStore.getWarWidgetProfileId(this@WidgetConfigActivity)
                 }
                 if (profileIdStr != null) {
                     val index = profiles.indexOfFirst { it.id.toString() == profileIdStr } + 1
@@ -139,20 +136,12 @@ class WidgetConfigActivity : AppCompatActivity() {
                         )
                     }
                 }
-                WidgetType.WAR -> {
-                    WidgetConfigStore.setWarWidgetAutoProfile(this@WidgetConfigActivity, isAuto)
-                    if (!isAuto) {
-                        val profile = profiles[selectedIndex - 1]
-                        WidgetConfigStore.setWarWidgetProfileId(this@WidgetConfigActivity, profile.id.toString())
-                    }
-                }
             }
 
             // Trigger widget update
             when (widgetType) {
                 WidgetType.MAIN -> MainWidget.updateAll(this@WidgetConfigActivity)
                 WidgetType.CLOSEST_UPGRADE -> ClosestUpgradeWidget.updateAll(this@WidgetConfigActivity)
-                WidgetType.WAR -> WarStatusWidget.updateAll(this@WidgetConfigActivity)
             }
 
             // Return result
@@ -169,6 +158,6 @@ class WidgetConfigActivity : AppCompatActivity() {
     }
 
     enum class WidgetType {
-        MAIN, CLOSEST_UPGRADE, WAR
+        MAIN, CLOSEST_UPGRADE
     }
 }

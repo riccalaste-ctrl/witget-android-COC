@@ -28,8 +28,6 @@ class CoCExportParser(private val context: Context) {
     private val buildingJsonMap: MutableMap<String, BuildingJsonMapEntry> = mutableMapOf()
     // Build times lookup: dataId -> level -> buildTimeSeconds
     private val buildTimes: MutableMap<Int, MutableMap<Int, Int>> = mutableMapOf()
-    // Lab times lookup: dataId -> level -> labTimeSeconds
-    private val labTimes: MutableMap<Int, MutableMap<Int, Int>> = mutableMapOf()
 
     init {
         loadMappings()
@@ -89,10 +87,10 @@ class CoCExportParser(private val context: Context) {
         }
     }
 
-    fun parseExport(jsonString: String, profile: PlayerAccount): ParseResult {
+    fun parseExport(jsonString: String): ParseResult {
         val export = json.decodeFromString<CoCExport>(jsonString)
-        // Timers in the export are remaining seconds from NOW (when the user exported)
-        val referenceDate = Clock.System.now()
+        // Timers in the export are remaining seconds from the export instant, not from the import
+        val referenceDate = exportInstant(export.timestamp, Clock.System.now())
         val playerTag = export.tag?.uppercase()?.replace("#", "") ?: ""
 
         val upgrades = mutableListOf<BuildingUpgrade>()
@@ -100,12 +98,12 @@ class CoCExportParser(private val context: Context) {
 
         // Parse buildings (Home Village)
         export.buildings?.forEach { building ->
-            parseBuilding(building, UpgradeCategory.BUILDER_VILLAGE, referenceDate, upgrades, profile)
+            parseBuilding(building, UpgradeCategory.BUILDER_VILLAGE, referenceDate, upgrades)
         }
 
         // Parse buildings2 (Builder Base)
         export.buildings2?.forEach { building ->
-            parseBuilding(building, UpgradeCategory.BUILDER_BASE, referenceDate, upgrades, profile)
+            parseBuilding(building, UpgradeCategory.BUILDER_BASE, referenceDate, upgrades)
         }
 
         // Parse traps (Home Village)
@@ -161,16 +159,23 @@ class CoCExportParser(private val context: Context) {
             parseGuardian(guardian, referenceDate, upgrades)
         }
 
-        // Parse helpers for cooldown tracking
+        // Helpers: cooldown expiry is relative to the export instant; levels drive boost speed
+        val helperCooldowns = mutableMapOf<Int, Instant>()
+        val helperLevels = mutableMapOf<Int, Int>()
         export.helpers?.forEach { helper ->
-            parseHelper(helper, profile)
+            helper.helperCooldown?.let { cooldownSeconds ->
+                helperCooldowns[helper.data] = referenceDate.plus(cooldownSeconds.toLong().seconds)
+            }
+            helperLevels[helper.data] = helper.lvl
         }
 
         return ParseResult(
             upgrades = upgrades.sortedBy { it.endTime },
             activeBoosts = activeBoosts,
             playerTag = playerTag,
-            timestamp = referenceDate
+            timestamp = referenceDate,
+            helperCooldowns = helperCooldowns,
+            helperLevels = helperLevels
         )
     }
 
@@ -178,8 +183,7 @@ class CoCExportParser(private val context: Context) {
         building: Building,
         category: UpgradeCategory,
         now: Instant,
-        upgrades: MutableList<BuildingUpgrade>,
-        profile: PlayerAccount
+        upgrades: MutableList<BuildingUpgrade>
     ) {
         val name = resolveName(building.data, "Edificio")
         val currentLevel = building.lvl ?: 0
@@ -387,16 +391,6 @@ class CoCExportParser(private val context: Context) {
         }
     }
 
-    private fun parseHelper(
-        helper: ExportHelper,
-        profile: PlayerAccount
-    ) {
-        helper.helperCooldown?.let { cooldownSeconds ->
-            val expiresAt = Clock.System.now().plus(cooldownSeconds.toLong().seconds)
-            profile.helperCooldownOverrides = profile.helperCooldownOverrides + (helper.data to expiresAt)
-        }
-    }
-
     private fun resolveName(dataId: Int, fallbackPrefix: String): String {
         return nameMapping[dataId]
             ?: buildingJsonMap[dataId.toString()]?.displayName
@@ -414,7 +408,9 @@ class CoCExportParser(private val context: Context) {
         val upgrades: List<BuildingUpgrade>,
         val activeBoosts: List<ActiveBoost>,
         val playerTag: String,
-        val timestamp: Instant
+        val timestamp: Instant,
+        val helperCooldowns: Map<Int, Instant> = emptyMap(),
+        val helperLevels: Map<Int, Int> = emptyMap()
     )
 }
 

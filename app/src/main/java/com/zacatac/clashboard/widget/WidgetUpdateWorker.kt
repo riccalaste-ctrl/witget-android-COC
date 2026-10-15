@@ -10,7 +10,6 @@ import com.zacatac.clashboard.data.database.AppDatabase
 import com.zacatac.clashboard.data.model.PlayerAccount
 import com.zacatac.clashboard.widget.closest.ClosestUpgradeWidget
 import com.zacatac.clashboard.widget.main.MainWidget
-import com.zacatac.clashboard.widget.war.WarStatusWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -33,7 +32,6 @@ class WidgetUpdateWorker(
             // Update all widget instances
             updateMainWidgets()
             updateClosestWidgets()
-            updateWarWidgets()
 
             // Schedule next update based on urgency
             scheduleNextUpdate(profiles)
@@ -51,10 +49,6 @@ class WidgetUpdateWorker(
 
     private suspend fun updateClosestWidgets() {
         ClosestUpgradeWidget.updateAll(applicationContext)
-    }
-
-    private suspend fun updateWarWidgets() {
-        WarStatusWidget.updateAll(applicationContext)
     }
 
     private suspend fun scheduleNextUpdate(profiles: List<PlayerAccount>) {

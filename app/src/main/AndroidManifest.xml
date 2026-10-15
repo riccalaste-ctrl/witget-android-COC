@@ -79,19 +79,6 @@
                 android:resource="@xml/widget_closest_info" />
         </receiver>
 
-        <!-- War Status Widget -->
-        <receiver
-            android:name=".widget.war.WarStatusWidgetReceiver"
-            android:exported="true"
-            android:label="@string/widget_war_description">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_war_info" />
-        </receiver>
-
         <!-- Quick Settings Tile for Import -->
         <service
             android:name=".widget.ImportTileService"

@@ -46,13 +46,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.zacatac.clashboard.data.model.ActiveBoost
 import com.zacatac.clashboard.data.model.BuildingUpgrade
+import com.zacatac.clashboard.data.model.PlayerAccount
 import com.zacatac.clashboard.data.model.UpgradeCategory
 import com.zacatac.clashboard.ui.MainViewModel
+import com.zacatac.clashboard.util.ProfileSelection
+import com.zacatac.clashboard.util.resolveSelectedProfile
+import com.zacatac.clashboard.widget.UpgradeImageProvider
 import com.zacatac.clashboard.widget.emojiForCategory
+import com.zacatac.clashboard.widget.main.hasReliableProgress
+import com.zacatac.clashboard.widget.upgradeProgressFor
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Duration.Companion.hours
+
+/** Import age after which the dashboard asks the user to re-import the village. */
+private val STALE_IMPORT_AGE = 12.hours
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,10 +76,11 @@ fun DashboardScreen(
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     val profiles by viewModel.profiles.collectAsState()
-    val selectedProfile = profiles.firstOrNull()
+    val selectedProfile = resolveSelectedProfile(profiles, ProfileSelection.storedId(context))
 
-    // Ticking clock: refreshes the countdowns every single second
+    // Ticking clock: refreshes the countdowns every second
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -74,10 +88,10 @@ fun DashboardScreen(
             tick++
         }
     }
-    // Read the ticking state to trigger recomposition every second
     @Suppress("UNUSED_VARIABLE")
     val currentTick = tick
     val now: Instant = Clock.System.now()
+    val imageProvider = remember(context) { UpgradeImageProvider(context) }
 
     Column(
         modifier = modifier
@@ -149,15 +163,21 @@ fun DashboardScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                item {
+                    ImportAgeNotice(selectedProfile, now)
+                }
                 items(UpgradeCategory.entries) { category ->
+                    // Completed upgrades are hidden: only running ones are shown
                     val upgrades = selectedProfile.activeUpgrades
-                        .filter { it.category == category }
+                        .filter { it.category == category && it.endTime > now }
                         .sortedBy { it.endTime }
 
                     CategorySection(
                         category = category,
                         upgrades = upgrades,
-                        now = now
+                        activeBoosts = selectedProfile.activeBoosts,
+                        now = now,
+                        imageProvider = imageProvider
                     )
                 }
                 item {
@@ -169,10 +189,32 @@ fun DashboardScreen(
 }
 
 @Composable
+fun ImportAgeNotice(profile: PlayerAccount, now: Instant) {
+    val lastImport = profile.lastImportDate ?: return
+    val stale = (now - lastImport) >= STALE_IMPORT_AGE
+    val local = lastImport.toLocalDateTime(TimeZone.currentSystemDefault())
+    val stamp = "%02d/%02d %02d:%02d".format(
+        local.dayOfMonth, local.monthNumber, local.hour, local.minute
+    )
+    Text(
+        text = if (stale) {
+            "Dati importati il $stamp: sono vecchi, reimporta il JSON per aggiornare i timer."
+        } else {
+            "Dati importati il $stamp"
+        },
+        fontSize = 12.sp,
+        color = if (stale) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 4.dp)
+    )
+}
+
+@Composable
 fun CategorySection(
     category: UpgradeCategory,
     upgrades: List<BuildingUpgrade>,
+    activeBoosts: List<ActiveBoost>,
     now: Instant,
+    imageProvider: UpgradeImageProvider,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -225,7 +267,7 @@ fun CategorySection(
                     modifier = Modifier.padding(top = 10.dp)
                 ) {
                     upgrades.forEach { upgrade ->
-                        UpgradeRow(upgrade = upgrade, now = now)
+                        UpgradeRow(upgrade = upgrade, activeBoosts = activeBoosts, now = now, imageProvider = imageProvider)
                     }
                 }
             }
@@ -234,21 +276,13 @@ fun CategorySection(
 }
 
 @Composable
-fun UpgradeRow(upgrade: BuildingUpgrade, now: Instant) {
-    val context = LocalContext.current
-    val drawableResId = remember(upgrade.name) {
-        val clean = upgrade.name.lowercase()
-            .replace(" ", "_")
-            .replace("-", "_")
-            .replace(".", "_")
-            .replace("'", "")
-            .replace("’", "")
-            .replace("(", "")
-            .replace(")", "")
-        val candidate = "coc_${clean}"
-        val id = context.resources.getIdentifier(candidate, "drawable", context.packageName)
-        if (id != 0) id else context.resources.getIdentifier(clean, "drawable", context.packageName)
-    }
+fun UpgradeRow(
+    upgrade: BuildingUpgrade,
+    activeBoosts: List<ActiveBoost>,
+    now: Instant,
+    imageProvider: UpgradeImageProvider
+) {
+    val drawableResId = imageProvider.resIdFor(upgrade.name)
 
     Row(
         modifier = Modifier
@@ -303,28 +337,24 @@ fun UpgradeRow(upgrade: BuildingUpgrade, now: Instant) {
             modifier = Modifier.width(130.dp)
         ) {
             Text(
-                upgrade.timeRemaining(now),
+                upgrade.timeRemainingText(activeBoosts, now),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { calculateProgress(upgrade, now) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.outlineVariant
-            )
+            // Bar only when the base duration is known, same rule as the widgets
+            if (hasReliableProgress(upgrade)) {
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { upgradeProgressFor(upgrade, activeBoosts, now) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant
+                )
+            }
         }
     }
-}
-
-fun calculateProgress(upgrade: BuildingUpgrade, now: Instant): Float {
-    val total = upgrade.effectiveTotalDuration(0)
-    if (total <= 0.0) return 1f
-    val remaining = upgrade.remainingSeconds(emptyList(), now)
-    return ((total - remaining) / total).coerceIn(0.0, 1.0).toFloat()
 }

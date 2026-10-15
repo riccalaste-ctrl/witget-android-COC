@@ -41,6 +41,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.zacatac.clashboard.data.database.AppDatabase
 import com.zacatac.clashboard.data.model.PlayerAccount
 import com.zacatac.clashboard.ui.MainViewModel
+import com.zacatac.clashboard.util.ProfileSelection
+import com.zacatac.clashboard.widget.UpgradeAlarmScheduler
 import com.zacatac.clashboard.widget.WidgetTickReceiver
 import kotlinx.coroutines.launch
 
@@ -114,9 +116,13 @@ fun ProfilesScreen(
                 items(profiles) { profile ->
                     ProfileCard(
                         profile = profile,
-                        onClick = { onProfileClick(profile.id.toString()) },
+                        onClick = {
+                            ProfileSelection.select(context, profile.id)
+                            onProfileClick(profile.id.toString())
+                        },
                         onDelete = {
                             scope.launch {
+                                UpgradeAlarmScheduler.cancelForProfile(context, profile.id)
                                 AppDatabase.getDatabase(context).playerAccountDao().deleteProfile(profile.id)
                                 WidgetTickReceiver.updateAllWidgets(context)
                                 Toast.makeText(context, "Profilo rimosso", Toast.LENGTH_SHORT).show()

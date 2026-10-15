@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Build
 import com.zacatac.clashboard.widget.closest.ClosestUpgradeWidget
 import com.zacatac.clashboard.widget.main.MainWidget
-import com.zacatac.clashboard.widget.war.WarStatusWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,7 +34,6 @@ class WidgetTickReceiver : BroadcastReceiver() {
         suspend fun updateAllWidgets(context: Context) {
             MainWidget.updateAll(context)
             ClosestUpgradeWidget.updateAll(context)
-            WarStatusWidget.updateAll(context)
         }
     }
 }
@@ -60,7 +58,8 @@ object WidgetTickScheduler {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val triggerAt = System.currentTimeMillis() + TICK_INTERVAL_MS
+        // Elapsed-realtime base for both branches: an epoch value here would fire decades in the future.
+        val triggerAt = android.os.SystemClock.elapsedRealtime() + TICK_INTERVAL_MS
         val canScheduleExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             alarmManager.canScheduleExactAlarms()
         } else {
@@ -69,11 +68,7 @@ object WidgetTickScheduler {
 
         try {
             if (canScheduleExact) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    android.os.SystemClock.elapsedRealtime() + TICK_INTERVAL_MS,
-                    pending
-                )
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending)
             } else {
                 alarmManager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pending)
             }
